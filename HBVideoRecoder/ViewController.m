@@ -9,11 +9,11 @@
 #import "ViewController.h"
 #import <AVFoundation/AVFoundation.h>
 
-@interface ViewController ()
+@interface ViewController ()<AVCaptureFileOutputRecordingDelegate>
 
 @property (nonatomic, strong) AVCaptureSession *captureSession;
-@property (nonatomic, strong) AVCaptureInput *videoInput;
-@property (nonatomic, strong) AVCaptureInput *audioInput;
+@property (nonatomic, strong) AVCaptureDeviceInput *videoInput;
+@property (nonatomic, strong) AVCaptureDeviceInput *audioInput;
 @property (nonatomic, strong) AVCaptureMovieFileOutput *movieOutPut;
 @property (nonatomic, strong) AVCaptureVideoPreviewLayer *previewLayer;
 
@@ -25,6 +25,44 @@
 
 - (void)viewDidLoad {
     [super viewDidLoad];
+    
+    [self initializeCamera];
+}
+
+- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    
+    if (self.movieOutPut.isRecording) {
+        
+        [self.movieOutPut stopRecording];
+        return;
+    }
+    
+    AVCaptureConnection *connection = [self.movieOutPut connectionWithMediaType:AVMediaTypeVideo];
+    if (connection.active && connection.enabled) {
+        
+        //防抖模式
+        AVCaptureVideoStabilizationMode stabilizationMode = AVCaptureVideoStabilizationModeCinematic;
+        if ([self.videoInput.device.activeFormat isVideoStabilizationModeSupported:stabilizationMode]) {
+            [connection setPreferredVideoStabilizationMode:stabilizationMode];
+        }
+        // 预览图层和视频方向保持一致,这个属性设置很重要，如果不设置，那么出来的视频图像可以是倒向左边的。
+        connection.videoOrientation = self.previewLayer.connection.videoOrientation;
+        // 设置视频输出的文件路径，这里设置为 temp 文件
+        NSString *outputFielPath = [NSTemporaryDirectory() stringByAppendingString:@"111.mov"];
+        
+        // 路径转换成 URL 要用这个方法，用 NSBundle 方法转换成 URL 的话可能会出现读取不到路径的错误
+        NSURL *fileUrl=[NSURL fileURLWithPath:outputFielPath];
+        
+        // 往路径的 URL 开始写入录像 Buffer ,边录边写
+        [self.movieOutPut startRecordingToOutputFileURL:fileUrl recordingDelegate:self];
+    } else {
+        
+        NSLog(@"No active/enabled connections");
+    }
+}
+
+#pragma mark - initialize
+- (void)initializeCamera {
     
     if ([self.captureSession canSetSessionPreset:AVCaptureSessionPreset640x480]) {
         
@@ -51,6 +89,8 @@
     }
     
     self.movieOutPut = [[AVCaptureMovieFileOutput alloc] init];
+    
+//    [self.captureSession beginConfiguration];
     // 将视频输入对象添加到会话 (AVCaptureSession) 中
     if ([self.captureSession canAddInput:self.videoInput]) {
         [self.captureSession addInput:self.videoInput];
@@ -59,12 +99,13 @@
     // 将音频输入对象添加到会话 (AVCaptureSession) 中
     if ([self.captureSession canAddInput:self.audioInput]) {
         [self.captureSession addInput:self.audioInput];
-        AVCaptureConnection *captureConnection = [self.movieOutPut connectionWithMediaType:AVMediaTypeVideo];
-        // 标识视频录入时稳定音频流的接受，我们这里设置为自动
-        if ([captureConnection isVideoStabilizationSupported]) {
-            captureConnection.preferredVideoStabilizationMode = AVCaptureVideoStabilizationModeAuto;
-        }
     }
+    
+    if ([self.captureSession canAddOutput:self.movieOutPut]) {
+        [self.captureSession addOutput:self.movieOutPut];
+    }
+    
+//    [self.captureSession commitConfiguration];
     
     // 让会话（AVCaptureSession）勾搭好输入输出，然后把视图渲染到预览层上
     self.previewLayer = [[AVCaptureVideoPreviewLayer alloc] initWithSession:self.captureSession];
@@ -72,8 +113,21 @@
     self.previewLayer.frame = self.view.bounds;
     self.previewLayer.videoGravity = AVLayerVideoGravityResizeAspectFill;//填充模式
     [self.view.layer addSublayer:self.previewLayer];
+    [self.captureSession startRunning];
 }
 
+#pragma mark - delegate
+- (void)captureOutput:(AVCaptureFileOutput *)captureOutput didStartRecordingToOutputFileAtURL:(NSURL *)fileURL fromConnections:(NSArray *)connections {
+    
+    NSLog(@"开始录制");
+}
+
+- (void)captureOutput:(AVCaptureFileOutput *)captureOutput didFinishRecordingToOutputFileAtURL:(NSURL *)outputFileURL fromConnections:(NSArray *)connections error:(NSError *)error {
+    
+    NSLog(@"录制结束");
+}
+
+#pragma mark - lazyloading
 - (AVCaptureSession *)captureSession {
     
     if (!_captureSession) {
@@ -82,17 +136,6 @@
     }
     
     return _captureSession;
-}
-
-- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
-    
-    if (self.captureSession.running) {
-        
-        [self.captureSession stopRunning];
-    } else {
-        
-        [self.captureSession startRunning];
-    }
 }
 
 - (AVCaptureDevice *)getCameraCaptureDevice:(AVCaptureDevicePosition)position {
@@ -135,7 +178,7 @@
     return nil;
 #else
     
-    NSArray *devices = [AVCaptureDevice devicesWithMediaType:AVMediaTypeVideo];
+    NSArray *devices = [AVCaptureDevice devicesWithMediaType:AVMediaTypeAudio];
     
     for (AVCaptureDevice *device in devices) {
         if ([device position] == position) {
